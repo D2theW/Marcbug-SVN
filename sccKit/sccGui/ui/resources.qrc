@@ -1,0 +1,21 @@
+<RCC>
+    <qresource prefix="/resources" >
+        <file>guiPixmaps/sccGuiIcon.png</file>
+        <file>guiPixmaps/sccGuiSplashscreen.png</file>
+        <file>menuIcons/disk.png</file>
+        <file>menuIcons/exit.png</file>
+        <file>menuIcons/flitWidget.png</file>
+        <file>menuIcons/garbageEmpty.png</file>
+        <file>menuIcons/garbageFull.png</file>
+        <file>menuIcons/packetWidget.png</file>
+        <file>menuIcons/perfmeter.png</file>
+        <file>menuIcons/radiation.png</file>
+        <file>menuIcons/ram.png</file>
+        <file>menuIcons/sknife.png</file>
+        <file>menuIcons/wischer.png</file>
+        <file>menuIcons/linuxBlue.png</file>
+        <file>menuIcons/linuxGreen.png</file>
+        <file>menuIcons/linuxOrange.png</file>
+        <file>menuIcons/kScreen.png</file>
+    </qresource>
+</RCC>

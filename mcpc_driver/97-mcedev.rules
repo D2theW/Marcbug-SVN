@@ -1,0 +1,3 @@
+SUBSYSTEM=="mcedev" ACTION=="add" 		 MODE="0666"
+SUBSYSTEM=="pci" ACTION=="add" ENV{PCI_ID}=="8086:C048"		RUN+="/sbin/modprobe rckcrb"
+
