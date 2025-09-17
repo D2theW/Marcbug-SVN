@@ -1,0 +1,448 @@
+Release 1.4.1:
+------------------
+New features / functionality:
+* Added kernel parameter interface between sccGui/sccBoot and Linux. This enables the
+  sccKit components to influence the behaviour of the Linux instance (e.g. POP-SHM
+  mode, early kernel printing, etc.) without the need to build a custom Linux!
+* Added Menu entries (in settings->Linux boot settings) to select POP-SHM settings
+  and to add custom kernel parameters (expert feature).
+* A complete new buildroot flow has been set up to accompany this release of sccKit.
+  It enables the user to build a custom Linux image with small effort and to build
+  own applications with the contained cross-compiler.
+* Added PCIe cold-rescan option to sccPowercycle... It's now possible to boot the PC
+  first and establish the PCIe connection afterwards with "sccPowercycle -s on"...
+
+Bugfixes:
+* Updated global reset to stop EMAC IP as well. Otherwise the EMAC IP may continue to
+  modify the memory which may result in failing memory test.
+* Fixed issue in sccWrite.
+
+Debugging functionality:
+* n.a.
+
+Known-issues:
+* n.a.
+
+Feature Binlist:
+* t.b.d.
+
+Requirements:
+* Linux driver for RCK CRB as delivered with this sccKit
+* Bitstream as delivered with this sccKit
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.4.0:
+------------------
+New features / functionality:
+* Default max. TID is now 0x40. The value can be changed by changing a module parameter.
+* sccDump: Added -s (--sif) option to dump content of system interface FPGA registers...
+* sccBmc: Added -p (--preset) option in order to load presets w/o check. This feature will
+  only work after power-on and is mainly intended for use with the BMC port of sccKit.
+* sccApi: Added timeout (of 3 seconds) to BMC command execution...
+* Added configuration option for SCC IP range to systemSettings.ini
+* Replaced QProgressBar instances by sccProgressBar, which supports both GUI and ASCII 
+  representations... This is mainly interesting becausess sccBmc and sccBoot take a while
+  on BMC.
+* sccBoot: Added -m option for non-gui memory check...
+* sccBmc -i: Added initialization of FPGA registers as well as initialization of the GCB
+  registers corresponding to the JTAG-Chain values. This finally enables Linux images to
+  find out how fast the hosting core is... Also added -r option to sccBmc in order to 
+  enable fast RPC mode (10MHz instead of 0.65MHz). This feature is necessary for DVFS
+  related experiments...
+* sccBmc -i, sccBoot, sccGui, sccReset -g: These applications from now on initialize some
+  FPGA registers with information about the network (IPs, Gateway etc.) as well as the
+  virtual display (Resolution & Color Depth as configured in sccGui) settings for the
+  latest Linux image with virtual framebuffers.
+* Added sccDisplay. This application is capable of displaying the virtual framebuffers
+  of all booted cores. It's possible to monitor a single core (with up to 25 frames per
+  second) or a preview of all cores (with repeating auto-update). The status bar points
+  the user to the help function... This application requires the latest Linux image!
+* Added sccTcpServer: This Server is necessary to work with the Microsoft visual studio
+  plugin for SCC!
+* Added sccWrite application and added optional parameter to sccDump -c... Thus, it's
+  now possible to perform reads and writes from the shell.
+* Updated SCC Linux default image with:
+  - Frame-buffer
+  - Ethernet driver
+  - Sound driver
+  - RHID: Remote Human Interface Device
+  - GPM: General Purpose Mouse Device
+  - MPlayer video player
+  - CPU frequency scaler (kernel component allowing the application to change core frequency)
+* Updated Bitstream with support for EMAC ports A, B, C & D
+* Updated BMC firware, that supports to read the JTAG chains that are releveant for the
+  CPU frequency scaler.
+* Added -r (for reboot) and -s (for switch on|off) options (as well as -h for help) to 
+  sccPowercycle...
+
+Bugfixes:
+* Fixed issue that sccBoot -g only worked when an image for MC0 was available.
+* Fix: Threads should now terminate properly when closing sccKit tools (e.g. sccGui).
+
+Debugging functionality:
+* Added SATA_PORT to sccGui packet widget (Rocky Lake only)...
+* Added and validated software RAM and software UART functionality! It can be enabled in
+  the debug settings. As automatic response generation of the FPGA gets disabled while
+  this debug option is enabled, the CRBIF network driver won't work. Use eMac instead!
+  Can be used for debugging the boot process of a new Linux image with "early konsole" 
+  enabled... Or simply write to 0x2f8 or 0x3f8 from any software to perform printf
+  debugging. A corresponding bareMetalC enhancement is available.
+
+Known-issues:
+* Ethernet: Upper 12 cores (y=3) show higher IP Packet drop than others.
+
+Feature Binlist:
+* t.b.d.
+
+Requirements:
+* Linux driver for RCK CRB as delivered with this sccKit
+* Bitstream as delivered with this sccKit
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.3.0:
+------------------
+New features / functionality:
+* Added software threads for driver access. This significantly speeds up data transfers... 
+* Made messageHandler thread safe, so that software threads can create log entries as well.
+* Added support for read32 with more bytes than FPGA FIFO depth and thus allowed up to 1MB transfers
+  in sccDump and Memory widget of sccGui.
+* Added user-abort feature to SIF training for controlled abort (closing the GUI caused the BMC
+  to hang otherwise).
+* Made all progress bars modal to prevent users from doing "interesting" things like booting Linux
+  and simultaneously starting the memory test.
+* Added define for transaction IDs between 0..63 (0..256 before) to support eMAC hardware. This
+  feature is not yet enabled by default as it requires a new bitstream, that doesn't come with
+  this release...
+* Modified "sccBoot -l" so that it also accepts the user to pass a custom Linux image. 
+* Added BMC_IS_HOST define to sccApi. This define enables the replacement of the PCIe connection
+  with the FPGA interface of the BMC, so that a cross-compiled (non-GUI) sccKit on the BMC
+  provides the creation of a self-booting platform...
+* Added fast-boot option for boot of Linux on all 48 cores (we just upload a single image and a
+  tiny bareMetalC program that duplicates this single image). Boot time for all 48 cores is in
+  the order of 10 seconds... ;-) This only works if a pre-merged image has been selected (e.g.
+  the default image).
+
+Bugfixes:
+* Disabled MPB bypass in "MPB_OWN" LUT entry. This works around the MPB bypass hardware bug.
+  (Bug description: http://marcbug.scc-dc.com/bugzilla3/show_bug.cgi?id=46)
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* n.t.r.
+
+Requirements:
+* Linux driver for RCK CRB as delivered with this sccKit
+* Bitstream as delivered with this sccKit
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.2.3:
+------------------
+New features / functionality:
+* Added driver re-initialization during BMC hardware reset...
+* install.csh does now create the mcekit folder if it doesn't exist...
+* Changed DDR3 memory test use allocated memory (malloc) instead of character arrays,
+  as character arrays are located in the stack and might cause trouble if they are
+  too large (depending on compiler libs)...
+* Changed timeout of splash screen to 3 seconds and added error dialog in case of diabled splashscreen.
+* Code cleanup with help of valgrind and cppcheck.
+* Updated GUI according to GNU human interface guidelines.
+* Added link to MARC forum in about dialog and removed "for internal use" statement...
+* Added "/opt/sccKit/sifPresets.ini" which stores the SIF training results after each extended or
+  full training! This preset usually also works after a power-cycle!  
+
+Bugfixes:
+* Changed maximum DDR3 address in read memory widget to be evaluated automatically according to
+  systemSettings.ini entry. Also updated overflow handling...
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* Allow multiple instances of sccKonsole on Ubuntu MCPCs.
+
+Requirements:
+* Linux driver for RCK CRB as delivered with this sccKit
+* Bitstream as delivered with this sccKit
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.2.2:
+------------------
+New features / functionality:
+* Added default LUT entry for eMAC connection on entry 0xf9.
+* Added DKMS flow for driver installation (jbrummer).
+
+Bugfixes:
+* Re-enabled BMC connection in sccPerf (for power display).
+* BMC JTAG read issue fixed.
+  -> Copperridge: BMC release 1.07
+  -> RockyLake: BMC release 1.04
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* Allow multiple instances of sccKonsole on Ubuntu MCPCs.
+
+Requirements:
+* Linux driver for RCK CRB as delivered with this sccKit
+* Bitstream as delivered with this sccKit
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.2.1:
+------------------
+New features / functionality:
+* Added sccGui option to restore default Linux image...
+* Added sccBmc option to send BMC commands to remote BMCs instead of the BMC 
+  that is connected to this MCPC (as configured in systemSettings.ini). Try
+  "sccBmc -h"...
+* Added hardware Reset to BMC menu.
+* Added custom command to BMC menu.
+* Increased waiting for results in sccProductiontest to 60 seconds.
+* Improved install script
+* Update BMC software to release 1.03 (as part of firmware update)
+* sccDump, sccPerf & sccReset no longer connect the BMC as they only need a
+  PCIe link...
+
+Bugfixes:
+* n.t.r.
+
+Debugging functionality:
+* Added possibility to pre-initialize the complete DDR3 memory after SIF training.
+  This is only available in sccGui and can be enabled with "initDDR3=true" in the
+  [GUI] section of ~/.config/sccKit/sccGui.conf...
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* Allow multiple instances of sccKonsole on Ubuntu MCPCs.
+
+Requirements:
+* Linux driver for RCK CRB as delivered with this sccKit
+* Bitstream as delivered with this sccKit
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.2.0:
+------------------
+New features / functionality:
+* sccBmc does no longer require a loaded driver to perform other tasks than initialization...
+* Added sccPowercycle which unloads the driver and powercycles the platform.
+* Updated SIF training to support 266Mhz SIF frequency on Rocky Lake platforms (tapel).
+* Significant speedup of RX SIF training (mriepen).
+* Added new SIF settings for Rocky Lake (khenris).
+* Added identification of DDR3 Slot (J0 - J7) to memory-test error messages...
+* Added possibility to pass argument to "sccBmc -i".
+* RX training is the new default training.
+
+Bugfixes:
+* Removed SCEMI software stack. sccApi now directly talks to the PCIe driver.
+  Combined with a fix of the PCIe driver (jbrummer) this solves the "unexpected packet"
+  issue that where sighted during some DMA transfers...
+* Fixed crashes of sccGui when opening/closing the konsole.
+* Fixed argument parser of sccDump.
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* Allow multiple instances of sccKonsole on Ubuntu MCPCs.
+
+Requirements:
+* Linux driver for RCK CRB as delivered with this sccKit
+* Bitstream as delivered with this sccKit
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.1.1:
+------------------
+New features / functionality:
+* sccGui does now use sccKonsole binary to invoke consoles... This makes the Konsole code
+  single source and thus easier to maintain. The user interface remains the same...
+* Improved compilation timestamp to contain date and time.
+* Added new SIF training for Rocky Lake platforms (tapel).
+* Added ioctl function calls that allow to update the TX base address as well as the
+  subnet-size from within sccKit. Thus the systemSettings.ini file becomes the single
+  source for system settings...
+* Added SCC production test to default linux image. 
+* Added Bitstream ID sanity check (Abort if ID is 0x00000000)
+
+Bugfixes:
+* Updated sccKonsole DCOP & DBUS mechanisms. Timeout was too small on slow MCPCs.
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* Allow multiple instances of sccKonsole on Ubuntu MCPCs.
+
+Requirements:
+* Linux driver for RCK CRB as delivered with this sccKit
+* Bitstream as delivered with this sccKit
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.1.0:
+------------------
+New features / functionality:
+* Added DDR3 Memory test that also initializes DDR3 memory with "all zero"...
+* Increased SCEMI timeout...
+* Added status information to sccGui log as well as to sccGui About dialog (MCPC, BMC, Platform, Memsize).
+* Added re-training of DDR3 memories in case of MEMRD ERROR...
+* Modified GRB access routines to be compatible with P54C access to 32 bit addresses. This implies that
+  the FPGA bitstream needs to be from 2010/04/28 or later... 
+* Added support for KDE4 konsole (which does no longer support an DCOP but a DBUS interface).
+
+Bugfixes:
+* NORM+ and DEMO settings are now indicating 266 MHz SIF frequency.
+* sccDump and memory reader now truncate memory chunks to a max of 1MB.
+* bootLinux slot now allocates the API in order to prevent conflicts with perfmeter.
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* n.t.r.
+
+Requirements:
+* Linux driver for RCK CRB: REV_16274
+* For compilation: QT version 4.5.0(lgpl)
+* Bitstream: 2010/04/28 or later...
+
+Release 1.0.1:
+------------------
+New features / functionality:
+* Added sccPerf
+* Added sccBmc for initialization of platform and BMC commands...
+* Added sccDump to visualize memory and CRB content without GUI. Also added CRB target to memory widget.
+* Changed "wischer" functionality to reset all cores AND re-inititialize all CRB registers (except LUTs).
+* Added generic image load functionality to sccBoot. Also made sure that sccBoot w/o args only prints help...
+* Changed sccReset, so that it only prints help when invoked w/o args...
+* Disabled (useless) log-file generation for everything but sccGUI...
+* Added printf commands to message handler (e.g. printfInfo)
+* Added signal/slot hooks for both Soft-RAM and IO to sccApi
+* Added support for Initialization and BMC commands on Rocky Lake platform
+
+Bugfixes:
+* Fixed "echo" commands in BMC command interpreter...
+
+Debugging functionality:
+* Added Soft-RAM functionality to sccGui
+* Fixed bitfield description tooltips in flit widgets
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* n.t.r.
+
+Requirements:
+* Linux driver for RCK CRB: REV_16274
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 1.0.0:
+------------------
+New features / functionality:
+* Cleanup of code...
+* Renamed objMerge to sccMerge for consistency.
+* Added BMC and Linux driver to release.
+
+Bugfixes:
+* Memory reader progress bar fix.
+* Fixed "failed to open" messages and Linux obj copy process when selecting a non-default linux image...
+* Fixed selection of system initialization files.
+* Fixed sccGui splashscreen
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* n.t.r.
+
+Requirements:
+* Linux driver for RCK CRB: REV_16274
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 0.9.2beta:
+------------------
+New features / functionality:
+* Changed "-s" or "--status" feature of sccBoot. For looking up the status
+  (using ping) we no longer connect to the PCIe driver.
+* Close perfmeter when reset is hit or system init gets invoked...
+* Changed default of "bootAll" to false...
+* Added a source file.
+* Added this release history file.
+
+Bugfixes:
+* n.t.r.
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* 
+
+Requirements:
+* Linux driver for RCK CRB: REV_16274
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 0.9.1beta:
+------------------
+New features / functionality:
+* Changed performance meter of sccGui. Now it's also possible to "resume"
+  a session and see the status of running cores (from the last session)...
+  * Added command line tools
+    - sccBoot: Boots Linux on selected cores. Type "sccBoot -h" for usage details
+    - sccReset: Resets selected cores. Type "sccReset -h" for usage details
+    - sccKonsole: Opens konsole w/ selected cores. Type "sccKonsole -h" for usage details
+
+Bugfixes:
+* n.t.r.
+
+Debugging functionality:
+* n.t.r.
+
+Known-issues:
+* n.t.r.
+
+Feature Binlist:
+* 
+
+Requirements:
+* Linux driver for RCK CRB: REV_16274
+* For compilation: QT version 4.5.0(lgpl)
+
+Release 0.9.0beta:
+------------------
+This was the initial version of sccGui, based on the Rock Creek configuration
+plugin for MCEKIT. This new GUI does no longer support the connection to MCEMU
+but is limited to the PCIe connection to the Copperridge platform. The low level
+API (sccApi) is implemented as a separate object, that can be used for the 
+implementation of further sccKit components...
+
+Requirements:
+* Linux driver for RCK CRB: REV_16274
+* For compilation: QT version 4.5.0(lgpl)
