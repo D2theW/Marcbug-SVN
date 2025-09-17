@@ -1,0 +1,50 @@
+#!/bin/tcsh
+
+if (( "$1" == "-h") || ("$1" == "")) then
+  echo "Usage: sccCmdline <option>"
+  echo ""
+  echo "Options:"
+  echo '-m <path> "<cmd-line>"	Patch merged image <path>/obj with <cmd-line> (execute after sccMerge!)'
+  echo '-p "<cmd-line>"	Patch pre-merged image <path>/linux.obj with <cmd-line>'
+  echo "-h 	Print this help text"
+  echo ""
+  echo "This tool creates kernel cmdline parameters as specified"
+  echo "in <command-line>. The tool relies on a pre-merged Linux"
+  echo 'in "./obj" folder...'
+  exit 255
+else if ("$1" == "-m") then
+  if (("$2" == "") || ("$3" == "")) then
+    echo "Error: Wrong number of arguments..."
+    $0 -h
+    exit 255
+  endif
+  if ( ! -d $2 ) then
+    echo "Error: Please provide valid path..."
+    $0 -h
+    exit 255
+  endif
+  cd $2
+  echo -n $3 > ./cmdline.bin
+  (dd if=/dev/zero bs=1 count=32 >> cmdline.bin) >& /dev/null
+  echo "0x00099000 ./cmdline.bin" > ./load.map
+  bin2obj -m ./load.map -o ./cmdline.obj
+  perl -pe "s/linux.obj/cmdline.obj/g" linux.mt > cmdline.mt
+  rm -rf ./cmdline
+  sccMerge `perl -pe "s/linux.mt/cmdline.mt/" obj/arguments.txt` -o ./cmdline
+else if ("$1" == "-p") then
+  if ("$2" == "") then
+    echo "Error: Wrong number of arguments..."
+    $0 -h
+    exit 255
+  endif
+  cd /tmp/sccKit_$USER
+  echo -n $2 > ./cmdline.bin
+  (dd if=/dev/zero bs=1 count=32 >> cmdline.bin) >& /dev/null
+  echo "0x00099000 ./cmdline.bin" > ./load.map
+  bin2obj -m ./load.map -o ./cmdline.obj
+else
+  echo "Error: Please provide valid option (-h, -m or -p)..."
+  $0 -h
+  exit 255
+endif
+exit 0

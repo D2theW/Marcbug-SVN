@@ -1,0 +1,55 @@
+#!/usr/intel/bin/tcsh -f
+if ( "$1" == "-c" || "$1" == "--clean" ) then
+  rm -rf bootlog.rck[0-4][0-9] >& /dev/null
+  exit
+else
+  cat /opt/sccKit/systemSettings.ini | grep memorySize=4 > /dev/null && setenv aperture F0000000 || setenv aperture 1EC000000
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+00*20000" | bc -l` 5000 -f bootlog.rck00
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+01*20000" | bc -l` 5000 -f bootlog.rck01
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+02*20000" | bc -l` 5000 -f bootlog.rck02
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+03*20000" | bc -l` 5000 -f bootlog.rck03
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+04*20000" | bc -l` 5000 -f bootlog.rck04
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+05*20000" | bc -l` 5000 -f bootlog.rck05
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+00*20000" | bc -l` 5000 -f bootlog.rck06
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+01*20000" | bc -l` 5000 -f bootlog.rck07
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+02*20000" | bc -l` 5000 -f bootlog.rck08
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+03*20000" | bc -l` 5000 -f bootlog.rck09
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+04*20000" | bc -l` 5000 -f bootlog.rck10
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+05*20000" | bc -l` 5000 -f bootlog.rck11
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+06*20000" | bc -l` 5000 -f bootlog.rck12
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+07*20000" | bc -l` 5000 -f bootlog.rck13
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+08*20000" | bc -l` 5000 -f bootlog.rck14
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+09*20000" | bc -l` 5000 -f bootlog.rck15
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+0A*20000" | bc -l` 5000 -f bootlog.rck16
+  sccDump -d 0x00 `echo "obase=16;ibase=16;$aperture+9000+0B*20000" | bc -l` 5000 -f bootlog.rck17
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+06*20000" | bc -l` 5000 -f bootlog.rck18
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+07*20000" | bc -l` 5000 -f bootlog.rck19
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+08*20000" | bc -l` 5000 -f bootlog.rck20
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+09*20000" | bc -l` 5000 -f bootlog.rck21
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+0A*20000" | bc -l` 5000 -f bootlog.rck22
+  sccDump -d 0x05 `echo "obase=16;ibase=16;$aperture+9000+0B*20000" | bc -l` 5000 -f bootlog.rck23
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+00*20000" | bc -l` 5000 -f bootlog.rck24
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+01*20000" | bc -l` 5000 -f bootlog.rck25
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+02*20000" | bc -l` 5000 -f bootlog.rck26
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+03*20000" | bc -l` 5000 -f bootlog.rck27
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+04*20000" | bc -l` 5000 -f bootlog.rck28
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+05*20000" | bc -l` 5000 -f bootlog.rck29
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+00*20000" | bc -l` 5000 -f bootlog.rck30
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+01*20000" | bc -l` 5000 -f bootlog.rck31
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+02*20000" | bc -l` 5000 -f bootlog.rck32
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+03*20000" | bc -l` 5000 -f bootlog.rck33
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+04*20000" | bc -l` 5000 -f bootlog.rck34
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+05*20000" | bc -l` 5000 -f bootlog.rck35
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+06*20000" | bc -l` 5000 -f bootlog.rck36
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+07*20000" | bc -l` 5000 -f bootlog.rck37
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+08*20000" | bc -l` 5000 -f bootlog.rck38
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+09*20000" | bc -l` 5000 -f bootlog.rck39
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+0A*20000" | bc -l` 5000 -f bootlog.rck40
+  sccDump -d 0x20 `echo "obase=16;ibase=16;$aperture+9000+0B*20000" | bc -l` 5000 -f bootlog.rck41
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+06*20000" | bc -l` 5000 -f bootlog.rck42
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+07*20000" | bc -l` 5000 -f bootlog.rck43
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+08*20000" | bc -l` 5000 -f bootlog.rck44
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+09*20000" | bc -l` 5000 -f bootlog.rck45
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+0A*20000" | bc -l` 5000 -f bootlog.rck46
+  sccDump -d 0x25 `echo "obase=16;ibase=16;$aperture+9000+0B*20000" | bc -l` 5000 -f bootlog.rck47
+endif

@@ -1,0 +1,35 @@
+#!/usr/bin/tcsh -f
+
+# Make sure that this is executed by root...
+if ( "`whoami`" != "root" ) then
+  echo "You need to be root to execute sccProductiontest. Try this:"
+  echo "# sudo `which sccProductiontest`"
+  exit
+endif
+
+# Reset SCC
+setenv sccKitPath `echo $0 | sed "s,bin/sccProductiontest,,"`
+${sccKitPath}/bin/sccReset -g
+
+# Prepare folder structure (might already exist, but let's make sure...)
+rm -rf /shared/bootTest
+mkdir /shared/bootTest
+mkdir /shared/bootTest/results
+mkdir /shared/bootTest/bin
+cp ${sccKitPath}/resources/stream* /shared/bootTest/bin
+touch /shared/bootTest/.enabled
+
+# Perform test...
+${sccKitPath}/bin/sccBoot -l
+echo Starting to execute production tests...
+sleep 60
+set failed = 0
+foreach pid (00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47)
+  diff /shared/bootTest/results/PID${pid}.log ${sccKitPath}/resources/GOLDEN_REFERENCE.log >& /dev/null || echo "Core with PID $pid failed. Refer to /shared/bootTest/results/PID${pid}.log for details..." && set failed = 1
+end
+rm -f /shared/bootTest/.enabled
+if ( "$failed" == "0" ) then
+  echo "All cores successfully passed the SCC boot test :-)"
+else
+  echo "Not all cores passed the SCC boot test! :-("
+endif

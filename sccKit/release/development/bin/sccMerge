@@ -1,0 +1,728 @@
+#!/usr/bin/perl -w
+
+################################################################################
+# 
+# Description:
+#  Merges a variable number of tests.  Needs the .32.obj files and the
+#  offset address. Builds a merged .32.obj file
+# 
+# Author:
+#  Michael Riepen
+# 
+################################################################################
+# 
+# Copyright (c) 2007 Intel Corporation
+# Intel Proprietary
+# 
+################################################################################
+
+################################################################################
+# 
+# Global Settings and Variables
+# 
+################################################################################
+
+# Flush STDOUT after every write
+$| = 1;
+
+# Commandline knobs...
+$regression = "";
+$testcase = "";
+
+# Globals
+my $fpga_mode = 0;
+my $single_slot = 0;
+my $memsize = 0;
+my $cores_per_mch = 0;
+my $private_code_slots = 0;
+my $shared_space = 0;
+my $create_image = 1;
+my $print_mcs = 0;
+my $enhanced = -1;
+my $target_folder = "./obj";
+my $sif_mc_base_address_offset = 384; # 180 hex added to LUT address offsets to
+                                      # have cores access SIF with 
+				      # address bits [33:31] = 3'b011
+				      # which will target the SIF internal MC 
+my $sif_mc_mode = 0;
+my $sif_host_mode = 0;
+my $single_mc = 0;
+my $lut_default = 0;
+my $force = 0;
+my $broadcast = 0;
+
+# 
+# Determine our executable's name
+# 
+@PROGNAME = split /\//, $0;
+$PROGNAME = $PROGNAME[$#PROGNAME];
+
+################################################################################
+# 
+# Subroutine Declarations
+# 
+################################################################################
+sub print_help {
+  my $exitcode = shift;
+
+  print  <<END_USAGE;
+
+Usage: $PROGNAME [options] <name>.mt
+       $PROGNAME [options] <name>.asm
+       $PROGNAME [options] <name>.obj
+
+Options:
+  -h or --help : Print this help message and exit...
+  -m or --memsize <number>: Define size per MCH in GB (1..16). Defaults to 16...
+  -n or --numcores <number>: Define number of cores (1..48) per MCH...
+  -o: target folder (default: ./obj)
+  -fpga: Create FPGA lookup tables...
+  -sif_mc: Create lookup tables that point the mem accesses to the SIF FPGA MC
+  -sif_host: Create lookup tables that point the mem accesses to the host Software RAM
+  -single_mc: This option places all shared memory locations in a single MC.
+  -1slot: Merge Slots 0x00 and 0xff to a single 16MB slot
+  -lut_default: Define complete LUT. Unused entries point to dedicated 5th shared space!
+  -noimage: Don't invoke gen_mem_img* script (Use for emulation and CRB)
+  -regression: Adopt pathes in "mt" file to match regression structure...
+  -tolerant: Allow segments that are not located within the private memory area.
+  -force: Force re-creation of merged object and LUTs.
+  -broadcast: Only creates image for MCH0. Used for broadcasting feature of plugin.
+
+A <name>.mt file contains the unique decimal Processor ID (PID), followed by
+the testcase (.asm or .obj, with path relative to current folder or absolute path) in
+each line. An enhanced multi-test file may also contain the Route and Dest-ID
+to the MCH, the memory slot within the MCH (value between 0 and 47). An
+assembler file implies a single tile simulation with Core 0 in Tile 0 (PID=0)...
+It's also possible to pass numbers as hexadecimal value. In that case the
+value needs to be preceeded by the Prefix "0x" (e.g. 0x1A).
+
+The PID can be derived by the tile ID (x, z) and the local core ID (z = {0,1})
+with the following formula: PID = ( ( x + ( 6 * y ) ) * 2 ) + z
+
+Example for .mt file entry with regular memory mapping...
+The objects of 12 Cores fit into one MCH:
+> # pid testcase
+> 0x00 ../tb/testcases/asm/Core_Legacy/byte.asm
+
+Example for .mt file entry with enhanced memory mapping...
+The objects of 48 Cores fit into one MCH:
+> # pid mch-route mch-dest-id mch-offset-base testcase
+> 0x00 0x00 6 00 ../tb/testcases/asm/Core_Legacy/byte.asm
+> 0x01 0x00 6 01 ../tb/testcases/asm/Core_Legacy/byte.asm
+> 0x02 0x25 4 47 ../tb/testcases/asm/Core_Legacy/byte.asm
+
+END_USAGE
+  if ($exitcode) {
+    # Make sure that things get recompiled after exiting with errors...
+    `test -d $target_folder && rm -rf $target_folder/testcase.txt $target_folder/arguments.txt`;
+  }
+  exit $exitcode;
+}
+
+# Calculate slots
+# ===============
+# One GB of system memory holds 64 memory slots (16MB each).
+# Thus the cores that share one mch (cores_per_mch) have 64 slots per GB of MC memory (memsize*64).
+# Therefore the total avaible number of private slots can be calulated like this: ($memsize*64)/$cores_per_mch
+# However, as we need boot vector slots and shared memory the calculation of the private code slots
+# can be calculated like this: int((($memsize*64)-1)/$cores_per_mch)-1
+#                                                 ^                  ^- One slot (per core) is reserved for the bootvector
+#                                                 |____________________ One slot (per MCH) is reserved for shared memory (4 slots if we only have one MC...) + default LUT slot (if requested)
+sub calculate_slots {
+  $private_code_slots = int((($memsize*64)-($lut_default+($single_mc?4:1)))/$cores_per_mch)-1;
+  # In one-slot mode we only need the boot slot. Otherwise we need minumum one private slot!
+  if (!$private_code_slots && !single_slot) { 
+    print STDERR "Error: No space left for private code. Please check your settings!\n";
+    print_help(1);
+  }
+  # Address 128 of the LUT contains shared memory entries... So don't allow private slots beyond 128!
+  if ($private_code_slots > 128) {
+    $private_code_slots = 128;
+    printf "Warning: Limiting number of private code slots to 128...\n";
+  }
+  $shared_space = $cores_per_mch * $private_code_slots;
+}
+
+################################################################################
+# 
+# Main Program
+# 
+################################################################################
+
+# 
+# Check argument(s)
+# 
+
+# No arguments
+if (!@ARGV) {
+  print STDERR "Error: Please provide proper arguments...\n";
+  print_help(1);
+}
+
+# Check arguments...
+my $tolerant = 0;
+my $currentArgString;
+while (@ARGV) {
+  my $option = shift;
+  $currentArgString.=$option." ";
+
+  if (($option =~ /^\-h$/i) || ($option =~ /^\-\-help$/i)){
+    print_help(0);
+  } elsif (($option =~ /^\-m$/i) || ($option =~ /^\-\-memsize$/i)){
+    $memsize = shift;
+    $currentArgString.=$memsize." ";
+    if (!$memsize) {
+      print STDERR "Error: Unvalid memory size!\n";
+      print_help(1);
+    }
+    if (($memsize !~ /^[0-9]+$/) || ($memsize < 1) || ($memsize > 16)) {
+      print STDERR "Error: Invalid memory size (",$memsize,") specified! Please use value between 1 and 16...\n";
+      print_help(1);
+    }
+  } elsif (($option =~ /^\-n$/i) || ($option =~ /^\-\-numcores$/i)){
+    $cores_per_mch = shift;
+    $currentArgString.=$cores_per_mch." ";
+    if (!$cores_per_mch) {
+      print STDERR "Error: Unvalid number of cores!\n";
+      print_help(1);
+    }
+    if (($cores_per_mch !~ /^[0-9]+$/) || ($cores_per_mch < 1) || ($cores_per_mch > 48)) {
+      print STDERR "Error: Invalid number of cores (",$cores_per_mch,") specified! Please use value between 1 and 48...\n";
+      print_help(1);
+    }
+  } elsif ($option =~ /^\-o$/){
+    $target_folder = shift;
+    $currentArgString.=$target_folder." ";
+    print "Target folder = $target_folder...\n";
+  } elsif ($option =~ /^\-tolerant$/){
+    $tolerant = 1;
+  } elsif ($option =~ /^\-noimage$/){
+    $create_image = 0;
+  } elsif ($option =~ /^\-regression$/){
+    $regression = "../../";
+  } elsif ($option =~ /^\-fpga$/){
+    $fpga_mode = 1;
+  } elsif ($option =~ /^\-1slot$/){
+    $single_slot = 1;
+  } elsif ($option =~ /^\-lut_default$/){
+    $lut_default = 1;
+  } elsif ($option =~ /^\-force$/){
+    $force = 1;
+  } elsif ($option =~ /^\-broadcast$/){
+    $broadcast = 1;
+  } elsif ($option =~ /^\-single_mc$/){
+    $single_mc = 1;
+  } elsif ($option =~ /^\-pmcs$/){
+    $print_mcs = 1;
+  } elsif ($option =~ /^\-sif_mc$/){
+    $sif_mc_mode = 1;
+    $single_mc = 1;
+    if ($sif_host_mode) {
+      print STDERR "Error: Options -sif_mc and -sif_host are mutually exclusive!\n";
+      print_help(1);
+    }
+  } elsif ($option =~ /^\-sif_host$/){
+    $sif_host_mode = 1;
+    $single_mc = 1;
+    if ($sif_mc_mode) {
+      print STDERR "Error: Options -sif_mc and -sif_host are mutually exclusive!\n";
+      print_help(1);
+    }
+  } else {
+    if ((! -e $option) || (($option !~ /\.mt$/) && ($option !~ /\.asm$/) && ($option !~ /\.obj$/))) {
+      print STDERR "Error: Invalid testcase file (",$option,") specified! Allowed extensions are mt, asm or obj...\n";
+      print_help(1);
+    }
+    $testcase = $option;
+  }
+}
+
+# Use default memsize if unspecified!
+if (!$memsize) {
+  $memsize = 16;
+}
+
+# 
+# create testcase list based on (*.mt) or single assembler testcase...
+# 
+if (!$testcase) {
+  print STDERR "Error: Testcase not specified...\n";
+  print_help(1);
+} elsif ($testcase =~ /\.mt$/) {
+  # Testlist file
+  open(MULTITILE_TEST, "<$testcase");
+  while(<MULTITILE_TEST>) {
+    my $line = $_;
+    $line =~ s/^\s*//; # Remove leading whitespaces
+    $line =~ s/\s*$//; # Remove trailing whitespaces
+    chomp($line);      # Remove CRs
+    push @testlist, $line if ($line !~ /(^#|^\/\/|^$)/); # Ignore Comments
+  }
+  close(MULTITILE_TEST);
+  $mt_test = $testcase;
+} else {
+  # Single testcase
+  push @testlist, "0x00 $testcase";
+  # Don't apply regression path fix in case of single testcase!
+  $regression = "";
+  $mt_test = "";
+}
+
+# Check for same arguments and .mt file than last time? In that case we are done...
+if (!$force) {
+  my $oldArgString;
+  if ( -e "$target_folder/arguments.txt") {
+    open(ARGUMENT_FILE, "<$target_folder/arguments.txt");
+    $oldArgString = <ARGUMENT_FILE>;
+    close(ARGUMENT_FILE);
+  } else {
+    $oldArgString = "";
+  }
+  chomp $oldArgString;
+  if (($currentArgString eq $oldArgString) and (`/usr/bin/diff $testcase $target_folder/testcase.txt` eq "")) {
+    print "sccMerge arguments as well as testcase didn't change since last call...\n";
+    print "Thus, the desired merged object as well as the LUTs should be in place.\n";
+    print "In case you want to re-generates the objects and the LUTs anyhow, please\n";
+    print "use the -force option! Bye...\n";
+    exit 0;
+  }
+}
+
+# 
+# Evaluate testcase list...
+# 
+$item_no = 0;
+$num_cores[0x00] = 0;
+$num_cores[0x05] = 0;
+$num_cores[0x20] = 0;
+$num_cores[0x25] = 0;
+foreach $item (@testlist) {
+  if ($item =~ /\S+\s+\S+\s+\S+\s+\S+\s+\S+/) {
+    # Prevent mixture of regular and enhanced multitest file formats...
+    if ($enhanced == -1) {
+      $enhanced = 1;
+      if (!$cores_per_mch) {
+        $cores_per_mch = 48;
+      }
+      calculate_slots();
+    } elsif ($enhanced == 0) {
+      print STDERR "Error: Mixture of regular and enhanced multitest file format in \"$mt_test\"!\n";
+      print_help(1);
+    }
+
+    # Get PID
+    $pid[$item_no] =  $item ;
+    $pid[$item_no] =~ s/(\S+)\s+\S+\s+\S+\s+\S+\s+\S+/$1/;
+    if ($pid[$item_no] =~ /^0x/) { $pid[$item_no] =~ s/^0x//; $pid[$item_no] = (hex $pid[$item_no]); } else { $pid[$item_no] = (int $pid[$item_no]); }
+
+    # Get Route for corresponding PID
+    $mch_route[$item_no] = $item;
+    $mch_route[$item_no] =~ s/\S+\s+(\S+)\s+\S+\s+\S+\s+\S+/$1/;
+    if ($mch_route[$item_no] =~ /^0x/) { $mch_route[$item_no] =~ s/^0x//; $mch_route[$item_no] = (hex $mch_route[$item_no]); } else { $mch_route[$item_no] = (int $mch_route[$item_no]); }
+    if (++$num_cores[$mch_route[$item_no]] > $cores_per_mch) {
+      print STDERR "Error: Testcase \"$mt_test\" contains more entries for MC with route $mch_route[$item_no] than allowed ($cores_per_mch). Check -n option...\n";
+      print_help(1);
+    }
+    # Get Dest-ID for corresponding PID
+    $mch_destid[$item_no] = $item;
+    $mch_destid[$item_no] =~ s/\S+\s+\S+\s+(\S+)\s+\S+\s+\S+/$1/;
+    if ($mch_destid[$item_no] =~ /^0x/) { $mch_destid[$item_no] =~ s/^0x//; $mch_destid[$item_no] = (hex $mch_destid[$item_no]); } else { $mch_destid[$item_no] = (int $mch_destid[$item_no]); }
+
+    # Get Offset base (value between 0 and 47) for corresponding PID
+    $offset_base = $item;
+    $offset_base =~ s/\S+\s+\S+\s+\S+\s+(\S+)\s+\S+/$1/;
+    if ($offset_base =~ /^0x/) { $offset_base =~ s/^0x//; $offset_base = (hex $offset_base); } else { $offset_base = (int $offset_base); }
+
+    # Get Testcase name (asm) for corresponding PID
+    $testname[$item_no] = $item;
+    $testname[$item_no] =~ s/\S+\s+\S+\s+\S+\s+\S+\s+(\S+)/$1/;
+    $testname[$item_no] = $regression.$testname[$item_no];
+  } elsif ($item =~ /\S+\s+\S+/) {
+    # Prevent mixture of regular and enhanced multitest file formats...
+    if ($enhanced == -1) {
+      $enhanced = 0;
+      if (!$cores_per_mch) {
+        $cores_per_mch = 12;
+      }
+      calculate_slots();
+    } elsif ($enhanced == 1) {
+      print STDERR "Error: Mixture of regular and enhanced multitest file format in \"$mt_test\"!\n";
+      print_help(1);
+    }
+
+    # Get PID
+    $pid[$item_no] =  $item ;
+    $pid[$item_no] =~ s/(\S+)\s+\S+/$1/;
+    if ($pid[$item_no] =~ /^0x/) { $pid[$item_no] =~ s/^0x//; $pid[$item_no] = (hex $pid[$item_no]); } else { $pid[$item_no] = (int $pid[$item_no]); }
+
+    # Get Testcase name (asm) for corresponding PID
+    $testname[$item_no] = $item;
+    $testname[$item_no] =~ s/\S+\s+(\S+)/$1/;
+    $testname[$item_no] = $regression.$testname[$item_no];
+
+    # Find out responsible MCH and calculate offset_base
+    if      (grep $pid[$item_no] == $_, (0x00..0x05, 0x0C..0x11)) {
+      $mch_route[$item_no] = 0x00; # Core X=0, Y=0
+      $mch_destid[$item_no] = 6;   # Westport (3'b110)
+      $offset_base = $pid[$item_no];
+    } elsif (grep $pid[$item_no] == $_, (0x06..0x0B, 0x12..0x17)) {
+      $mch_route[$item_no] = 0x05; # Core X=5, Y=0
+      $mch_destid[$item_no] = 4;   # Eastport (3'b100)
+      $offset_base = $pid[$item_no] - 0x06;
+    } elsif (grep $pid[$item_no] == $_, (0x18..0x1D, 0x24..0x29)) {
+      $mch_route[$item_no] = 0x20; # Core X=0, Y=3
+      $mch_destid[$item_no] = 6;   # Westport (3'b110)
+      $offset_base = $pid[$item_no] - 0x18;
+    } elsif (grep $pid[$item_no] == $_, (0x1E..0x23, 0x2A..0x2F)) {
+      $mch_route[$item_no] = 0x25; # Core X=5, Y=3
+      $mch_destid[$item_no] = 4;   # Eastport (3'b100)
+      $offset_base = $pid[$item_no] - 0x1E;
+    } else {
+      printf STDERR "Error: Unknown PID (".sprintf("0x%02x", $pid[$item_no]).")\n", ;
+      print_help(1);
+    }
+    if (++$num_cores[$mch_route[$item_no]] > $cores_per_mch) {
+      print STDERR "Error: Testcase \"$mt_test\" contains more entries for MC with route $mch_route[$item_no] ($num_cores[$mch_route[$item_no]]) than specified ($cores_per_mch). Check -n option...\n";
+      print_help(1);
+    }
+    if ($offset_base > 5) { $offset_base -= 6; }
+  } else {
+    print STDERR "Error: Invalid entry in file \"$mt_test\":\n       -> $item";
+    print_help(1);
+  }
+
+  # Always create all luts... Normally also create all MCH images.
+  # In case of broadcasting only create memory image for MCH 0x00-W...
+  push @lutindexlist, $item_no;
+  if (!($broadcast && $mch_route[$item_no])) {
+    push @codeindexlist, $item_no;
+  }
+
+  # Check testname entry...
+  if (! -f $testname[$item_no]) {
+    printf STDERR "Error: Testcase \"%s\"\n       specified in \"%s\"\n       cannot be opened in read mode...\n", $testname[$item_no], $mt_test;
+    print_help(1);
+  }
+
+  $mch_file[$item_no] = "$target_folder/mch_".($mch_route[$item_no]&0x0f)."_".(($mch_route[$item_no]&0x0f0)>>4).".32.obj";
+
+  # Calculate code offset within MCH
+  if (($cores_per_mch == 48) && ($memsize < 2) && !$single_slot) {
+    print STDERR "Error: Enhanced MT files require at least 2 GB of Memory per MCH (check -m option and/or -1slot option)!\n";
+    print_help(1);
+  }
+  $code_offset[$item_no] = $offset_base * $private_code_slots;
+  $boot_offset[$item_no] = $offset_base + ($memsize*64) - $cores_per_mch;
+  $item_no++;
+}
+
+# Prepare object directory
+`test -d $target_folder && rm -rf $target_folder`;
+`mkdir $target_folder`;
+
+# Save current arguments and testcase
+`cp $testcase $target_folder/testcase.txt`;
+`echo $currentArgString > $target_folder/arguments.txt`;
+
+# 
+# Compile the assembler file(s)
+# 
+foreach $item (@codeindexlist) {
+  $id_string = sprintf "%02x", $pid[$item];
+  `echo "; $PROGNAME: -------------------------------------------------------------------" > $target_folder/memory_$id_string.asm`;
+  if ($mt_test ne "") {
+    `echo "; $PROGNAME:  Defined by \"$mt_test\"" >> $target_folder/memory_$id_string.asm`;
+  }
+  `echo "; $PROGNAME:  Testcase argument (PID 0x$id_string) was \"$testname[$item]\"" >> $target_folder/memory_$id_string.asm`;
+  `echo "; $PROGNAME: -------------------------------------------------------------------" >> $target_folder/memory_$id_string.asm`;
+  if ($testname[$item] =~ /\.asm$/) {
+    `cat $testname[$item] >> $target_folder/memory_$id_string.asm`;
+  } elsif ($testname[$item] =~ /\.obj$/) {
+    `echo "; $PROGNAME: Thus, this assembler file is undefined..." >> $target_folder/memory_$id_string.asm`;
+  } else {
+    printf STDERR "Error: Testcase \"%s\"\n       specified in \"%s\"\n       doesn't have a valid suffix (\".obj\" or \".asm\")...\n", $testname[$item], $mt_test;
+    print_help(1);
+  }
+
+  if ($testname[$item] =~ /\.obj$/) {
+    # Only create links as these files can be huge...
+    if ($testname[$item] =~ /^\//) {
+      # Absolute path
+      `ln -sf $testname[$item] $target_folder/memory_$id_string.32.obj`;
+    } else {
+      # Relative path
+      `cd $target_folder; ln -sf ../$testname[$item] ./memory_$id_string.32.obj`;
+    }
+  }
+  die if (! -e "$target_folder/memory_$id_string.32.obj");
+  $testname[$item] = "$target_folder/memory_$id_string.32.obj";
+}
+
+# Open MCH memory files...
+$prev = 'nonesuch';
+@mch_files = grep($_ ne $prev && (($prev) = $_), sort @mch_file);
+
+foreach $item (@mch_files) {
+  # Open output file
+  open($item, ">".$item);
+  # Initialize output files...
+  print $item "/origin 0\n";
+}
+
+# Now merge testcases to outputfiles...
+foreach $item (@codeindexlist) {
+  open(TESTCASE, "<$testname[$item]");
+  $mch_file = $mch_file[$item];
+  printf $mch_file "/origin %08x\n", ($code_offset[$item] << 22);
+  $curr_addr = $code_offset[$item]<<24;
+  while(<TESTCASE>) {
+    if (m|^/eof|) {
+        close TESTCASE;
+        last;
+    }
+    if ($_ =~ m|^/origin ([A-F\d]+)$|i) {
+      $origin = (hex $1) << 2;
+      $single_slot_check = 0;
+      if (($origin & 0x0ff000000) == 0x00000000) {
+        # Code slot 0x00...
+        if ($single_slot) {
+          $origin += ($boot_offset[$item] << 24);
+          $single_slot_check = 1;
+        } else {
+          $origin += ($code_offset[$item] << 24);
+        }
+      } elsif ($origin < ($private_code_slots*0x1000000)) {
+        # Remaining code slots...
+        $origin += ($code_offset[$item] << 24);
+      } elsif ($origin >= 0xFF000000) {
+        # Boot slot...
+        if ($print_mcs) {
+          printf "MAX_CODE_SLOT=%03d\n", int($curr_addr/16777216);
+        }
+        $origin -= (0xff << 24);
+        $origin += ($boot_offset[$item] << 24);
+      } elsif ($single_slot && (($origin & 0x0ff000000) == 0x00000000)) {
+        $origin = ($boot_offset[$item] << 24) + ($origin & 0x000ffffff);
+      } else {
+        if ($tolerant) {
+          $origin += ($code_offset[$item] << 24);
+          printf "Warning: Testcase %0s is not suitable for addressmapping\n", $testname[$item];
+          printf "         as some code is contained in the forbidden address\n";
+          printf "         space 0x%0x000000-0x0FEFFFFFF!\n", int($memsize*64/$cores_per_mch)-1;
+        } else {
+          printf STDERR "Error: Testcase %0s is not suitable for addressmapping\n", $testname[$item];
+          printf STDERR "       as some code is contained in the forbidden address\n";
+          printf STDERR "       space 0x%0x000000-0x0FEFFFFFF!\n", int($memsize*64/$cores_per_mch)-1;
+          print_help(1);
+        }
+      }
+      $curr_addr = $origin;
+      $origin = $origin >> 2;
+      printf $mch_file "/origin %08x\n", $origin;
+      next;
+    }
+    $curr_addr+=0x10;
+    if ($single_slot_check) {
+      $single_slot_check+=0x10;
+      if ($single_slot_check > 0x1000000) {
+        print STDERR "Error: Image is too large to use -1slot option. Aborting!\n";
+        print_help(1);
+      }
+    }
+    print $mch_file $_;
+  }
+}
+
+# Close MCH memory files...
+foreach $item (@mch_files) {
+  # Create EOF entry and close output file
+  printf $item "/eof\n";
+  close($item);
+
+  if ($create_image) {
+    # Initialize output files...
+    if (!$fpga_mode) {
+      $mch_dat = $item;
+      $mch_dat =~ s/(.*)mch_(.*).32.obj/$1vmem8_$2.dat/;
+      `gen_mem_img.pl $item $mch_dat`;
+    } else {
+      $mch_dat = $item;
+      $mch_dat =~ s/(.*)mch_(.*).32.obj/$1mcemu_mem_$2.img/;
+      `gen_mem_img_denali.pl -nodenali $item $mch_dat` 
+    }
+  }
+}
+
+print "Successfully created memory images...\n";
+
+# Initialize all LUTs with Westport of MCH 0 as this seems to be a nice default ;-)
+for ($loop_x=0;$loop_x<6;$loop_x++) {
+  for ($loop_y=0;$loop_y<4;$loop_y++) {
+    for ($loop_z=0;$loop_z<2;$loop_z++) {
+      for ($loop_addr = 0; $loop_addr < 256; $loop_addr++) {
+        $lut_route [$loop_x][$loop_y][$loop_z][$loop_addr] = 0;
+        $lut_destid[$loop_x][$loop_y][$loop_z][$loop_addr] = 6;
+        $lut_offset[$loop_x][$loop_y][$loop_z][$loop_addr] = 0;
+        $lut_comment[$loop_x][$loop_y][$loop_z][$loop_addr] = "UNUSED (no overwrite)";
+      }
+    }
+  }
+}
+
+# Overwrite specific LUT entries corresponding to current configuration...
+foreach $item (@lutindexlist) {
+  $x = int(($pid[$item]/2)-int(($pid[$item]/2)/6)*6);
+  $y = int(($pid[$item]/2)/6);
+  $z = $pid[$item]%2;
+  # Fill all unused lookup table entries with a Memory location in the target memory
+  if ($lut_default) {
+    for ($loop_addr = 0; $loop_addr < 256; $loop_addr++) {
+      $lut_route [$x][$y][$z][$loop_addr] = $mch_route[$item];
+      $lut_destid[$x][$y][$z][$loop_addr] = $mch_destid[$item];
+      $lut_offset[$x][$y][$z][$loop_addr] = $shared_space+1; # Shared space + 1...
+      $lut_offset[$x][$y][$z][$loop_addr] = $lut_offset[$x][$y][$z][$loop_addr] + 3 if ($single_mc); # -> 4th shared space + 1
+      $lut_offset[$x][$y][$z][$loop_addr] = $lut_offset[$x][$y][$z][$loop_addr] + $sif_mc_base_address_offset if ($sif_mc_mode);
+      $lut_comment[$x][$y][$z][$loop_addr] = sprintf("0x%02x (%03d): Forward accesses to undefined LUT entries to shared Space of MCH4 + 1...", $loop_addr, $loop_addr);
+    }
+  }
+  # Define Route to MCs (Private space: Code and data section)...
+  for ($loop_addr = 0; $loop_addr < $private_code_slots; $loop_addr++) {
+    $lut_route [$x][$y][$z][$loop_addr] = $mch_route[$item];
+    $lut_destid[$x][$y][$z][$loop_addr] = $mch_destid[$item];
+    $lut_offset[$x][$y][$z][$loop_addr] = $loop_addr+$code_offset[$item];
+    $lut_offset[$x][$y][$z][$loop_addr] = $lut_offset[$x][$y][$z][$loop_addr] + $sif_mc_base_address_offset if ($sif_mc_mode);
+    $lut_comment[$x][$y][$z][$loop_addr] = sprintf("0x%02x (%03d): Route to private space: Code and data section...", $loop_addr, $loop_addr);
+  }
+  if ($single_slot) {
+    # Define Route to MCs (Private space: Boot section)...
+    $lut_route [$x][$y][$z][0] = $mch_route[$item];
+    $lut_destid[$x][$y][$z][0] = $mch_destid[$item];
+    $lut_offset[$x][$y][$z][0] = $boot_offset[$item];
+    $lut_offset[$x][$y][$z][0] = $lut_offset[$x][$y][$z][0] + $sif_mc_base_address_offset if ($sif_mc_mode);
+    $lut_comment[$x][$y][$z][0] = sprintf("0x%02x (%03d): Route to private space: Code and data section mixed with boot section (single slot configuration)...", 0, 0);
+  }
+  # Define Route to Shared MCs (Shared space)
+  for ($loop=0; $loop < 4; $loop++) {
+    $lut_route [$x][$y][$z][128+$loop] = ($single_mc)?$mch_route[$item]:(($loop==2 || $loop==3)?2:0)*16 + (($loop==1 || $loop==3)?5:0);
+    $lut_destid[$x][$y][$z][128+$loop] = ($single_mc)?$mch_destid[$item]:($loop==1 || $loop==3)?4:6;
+    $lut_offset[$x][$y][$z][128+$loop] = $shared_space;
+    $lut_offset[$x][$y][$z][128+$loop] = $lut_offset[$x][$y][$z][128+$loop] + $loop if ($single_mc);
+    $lut_offset[$x][$y][$z][128+$loop] = $lut_offset[$x][$y][$z][128+$loop] + $sif_mc_base_address_offset if ($sif_mc_mode);
+    $lut_comment[$x][$y][$z][128+$loop] = sprintf("0x%02x (%03d): Shared space: MCH%0d (x=%0d, y=%0d, %0s)...", 128+$loop, 128+$loop, $loop, ($loop==1 || $loop==3)?5:0, ($loop==2 || $loop==3)?2:0, ($loop==1 || $loop==3)?"East":"West");
+  }
+  # Define Route to MPB of each core
+  for ($loop_x=0;$loop_x<6;$loop_x++) {
+    for ($loop_y=0;$loop_y<4;$loop_y++) {
+      $lut_route [$x][$y][$z][192+($loop_y*6)+$loop_x] = ($loop_y*16)+$loop_x;
+      $lut_destid[$x][$y][$z][192+($loop_y*6)+$loop_x] = 3; # Local MPB
+      $lut_offset[$x][$y][$z][192+($loop_y*6)+$loop_x] = 0;
+      $lut_comment[$x][$y][$z][192+($loop_y*6)+$loop_x] = sprintf("0x%02x (%03d): MPB Route for core x=$loop_x, y=$loop_y...",192+($loop_y*6)+$loop_x,192+($loop_y*6)+$loop_x);
+    }
+  }
+  $lut_route [$x][$y][$z][192+24] = 0x000+($y*16)+$x; # 0x100 offset enables bypass (data will not cross the mesh)
+                                                      # 0x000 offset disables bypass (data will cross the mesh) - This option is active because of bypass bug -> http://marcbug.scc-dc.com/bugzilla3/show_bug.cgi?id=46
+  $lut_destid[$x][$y][$z][192+24] = 3; # Local MPB
+  $lut_offset[$x][$y][$z][192+24] = 0;
+  $lut_comment[$x][$y][$z][192+24] = sprintf("0x%02x (%03d): Own MPB Route...",192+24,192+24);
+  # Define Route to CRB of each core
+  for ($loop_x=0;$loop_x<6;$loop_x++) {
+    for ($loop_y=0;$loop_y<4;$loop_y++) {
+      $lut_route [$x][$y][$z][192+32+($loop_y*6)+$loop_x] = ($loop_y*16)+$loop_x; 
+      $lut_destid[$x][$y][$z][192+32+($loop_y*6)+$loop_x] = 2; # Local CRB
+      $lut_offset[$x][$y][$z][192+32+($loop_y*6)+$loop_x] = 0;
+      $lut_comment[$x][$y][$z][192+32+($loop_y*6)+$loop_x] = sprintf("0x%02x (%03d): CRB Route for core x=$loop_x, y=$loop_y...",192+32+($loop_y*6)+$loop_x,192+32+($loop_y*6)+$loop_x);
+    }
+  }
+  $lut_route [$x][$y][$z][192+32+24] = ($y*16)+$x;
+  $lut_destid[$x][$y][$z][192+32+24] = 2; # Local CRB
+  $lut_offset[$x][$y][$z][192+32+24] = 0;
+  $lut_comment[$x][$y][$z][192+32+24] = sprintf("0x%02x (%03d): Own CRB Route...",192+32+24,192+32+24);
+  # Define Route to FPGA GRB (for eMAC driver)
+  $lut_route [$x][$y][$z][249] = 0x03;
+  $lut_destid[$x][$y][$z][249] = 5; # South
+  $lut_offset[$x][$y][$z][249] = 0x100;
+  $lut_comment[$x][$y][$z][249] = sprintf("0x%02x (%03d): Route to Host for eMAC access (x=3, y=0, South, offset 0x100000000)...",249,249);
+  # Define Route to Host PC for TCP/IP host driver
+  $lut_route [$x][$y][$z][250] = 0x03;
+  $lut_destid[$x][$y][$z][250] = 5; # South
+  $lut_offset[$x][$y][$z][250] = 0x200;
+  $lut_comment[$x][$y][$z][250] = sprintf("0x%02x (%03d): Route to Host for TCP/IP traffic (x=3, y=0, South, offset 0x200000000)...",250,250);
+  # Define Route to RPC
+  $lut_route [$x][$y][$z][251] = 0;
+  $lut_destid[$x][$y][$z][251] = 5; # South
+  $lut_offset[$x][$y][$z][251] = 0;
+  $lut_comment[$x][$y][$z][251] = sprintf("0x%02x (%03d): Route to RPC (x=0, y=0, South)...",251,251);
+  # Define Route to FPGA GRB (for SATA driver)
+  $lut_route [$x][$y][$z][252] = 0x03;
+  $lut_destid[$x][$y][$z][252] = 5; # South
+  $lut_offset[$x][$y][$z][252] = 0x180;
+  $lut_comment[$x][$y][$z][252] = sprintf("0x%02x (%03d): Route to Host for SATA access (x=3, y=0, South, offset 0x180000000)...",252,252);
+  # Define Route to MCs (Private space: Boot section)...
+  $lut_route [$x][$y][$z][255] = $mch_route[$item];
+  $lut_destid[$x][$y][$z][255] = $mch_destid[$item];
+  $lut_offset[$x][$y][$z][255] = $boot_offset[$item];
+  $lut_offset[$x][$y][$z][255] = $lut_offset[$x][$y][$z][255] + $sif_mc_base_address_offset if ($sif_mc_mode);
+  $lut_comment[$x][$y][$z][255] = sprintf("0x%02x (%03d): Route to private space: Boot section...", 255, 255);
+}
+
+# Write LUTs to disk...
+open(LUT_VI, ">$target_folder/lut_init.vi");
+open(LUT_DAT, ">$target_folder/lut_init.dat");
+for ($loop_y=0;$loop_y<4;$loop_y++) {
+  for ($loop_x=0;$loop_x<6;$loop_x++) {
+    for ($loop_z=0;$loop_z<2;$loop_z++) {
+      for ($loop_addr = 0; $loop_addr < 256; $loop_addr++) {
+        if (!$loop_addr) {
+          printf LUT_VI "// -------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+          printf LUT_VI "// -------------------------------------------------------------- Settings for core #$loop_z of Tile x=$loop_x, y=$loop_y --------------------------------------------------------------\n";
+          printf LUT_VI "// -------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+        }
+        if ($lut_comment[$loop_x][$loop_y][$loop_z][$loop_addr] ne "UNUSED (no overwrite)") {
+          printf LUT_VI "tb_top.rk.tile_x[$loop_x].tile_y[$loop_y].rk_tile.rku_syscfg_lut$loop_z.lut.rkcbtbdatarray%0d.BpTrgmArrayMnnnH[8'h%02x][%0d][21:0] = {9'h%03x,3'b%03b,10'h%03x}; // %s\n",($loop_addr & 0x080)>>7, $loop_addr & 0x03f, ($loop_addr & 0x040)>>6, $lut_route[$loop_x][$loop_y][$loop_z][$loop_addr], $lut_destid[$loop_x][$loop_y][$loop_z][$loop_addr], $lut_offset[$loop_x][$loop_y][$loop_z][$loop_addr], $lut_comment[$loop_x][$loop_y][$loop_z][$loop_addr];
+          printf LUT_DAT "%02x 2 %08x %08x\n",(16*$loop_y)+$loop_x, (($loop_z==0)?0x0800:0x1000)+($loop_addr*8), 8192*$lut_route[$loop_x][$loop_y][$loop_z][$loop_addr] + 1024*$lut_destid[$loop_x][$loop_y][$loop_z][$loop_addr] + $lut_offset[$loop_x][$loop_y][$loop_z][$loop_addr];
+        } else {
+          printf LUT_VI "                                                                                                                                      // 0x%02x (%03d): %s...\n", $loop_addr, $loop_addr, $lut_comment[$loop_x][$loop_y][$loop_z][$loop_addr];
+        }
+      }
+    }
+  }
+}
+close(LUT_VI);
+close(LUT_DAT);
+
+# Create LUT image files and coe files...
+if ($fpga_mode) {
+  `mkdir $target_folder/lut_images`;
+  for ($loop_y=0;$loop_y<4;$loop_y++) {
+    for ($loop_x=0;$loop_x<6;$loop_x++) {
+      `mkdir $target_folder/lut_images/lut_x${loop_x}_y${loop_y}`;
+      for ($loop_z = 0; $loop_z < 2; $loop_z++) {
+        for ($loop_array = 0; $loop_array < 2; $loop_array++) {
+          for ($loop_entry = 0; $loop_entry < 2; $loop_entry++) {
+            $lut_file = "lut${loop_z}_${loop_array}_${loop_entry}";
+            open($img_file, ">$target_folder/lut_images/lut_x${loop_x}_y${loop_y}/$lut_file.img");
+            open($coe_file, ">$target_folder/lut_images/lut_x${loop_x}_y${loop_y}/$lut_file.coe");
+            printf $coe_file "MEMORY_INITIALIZATION_RADIX = 16;\n";
+            printf $coe_file "MEMORY_INITIALIZATION_VECTOR =\n";
+            for ($loop_line = 0; $loop_line < 64; $loop_line++) {
+              printf $img_file "00%06x",8192*$lut_route[$loop_x][$loop_y][$loop_z][128*$loop_array+64*$loop_entry+$loop_line] + 1024*$lut_destid[$loop_x][$loop_y][$loop_z][128*$loop_array+64*$loop_entry+$loop_line] + $lut_offset[$loop_x][$loop_y][$loop_z][128*$loop_array+64*$loop_entry+$loop_line];
+              printf $coe_file "00%06x",8192*$lut_route[$loop_x][$loop_y][$loop_z][128*$loop_array+64*$loop_entry+$loop_line] + 1024*$lut_destid[$loop_x][$loop_y][$loop_z][128*$loop_array+64*$loop_entry+$loop_line] + $lut_offset[$loop_x][$loop_y][$loop_z][128*$loop_array+64*$loop_entry+$loop_line];
+              printf $img_file "\n";
+              if ($loop_line < 63) {
+                printf $coe_file ",\n";
+              } else {
+                printf $coe_file ";\n";
+              }
+            }
+            close($img_file);
+            close($coe_file);
+          }
+        }
+      }
+    }
+  }
+}
+
+print "Successfully created LUT configuration...\n";
+
+exit 0;

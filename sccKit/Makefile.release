@@ -1,0 +1,46 @@
+all: sccGui sccBoot sccReset sccKonsole sccBmc sccDump sccWrite sccPerf sccTcpServer sccDisplay
+
+sccGui:
+	cd sccGui; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccGui ../release/development/bin/
+
+sccBoot:
+	cd sccBoot; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccBoot ../release/development/bin/
+
+sccReset:
+	cd sccReset; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccReset ../release/development/bin/
+
+sccKonsole:
+	cd sccKonsole; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccKonsole ../release/development/bin/
+
+sccBmc:
+	cd sccBmc; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccBmc ../release/development/bin/
+
+sccDump:
+	cd sccDump; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccDump ../release/development/bin/
+
+sccWrite:
+	cd sccWrite; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccWrite ../release/development/bin/
+
+sccPerf:
+	cd sccPerf; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccPerf ../release/development/bin/
+
+sccTcpServer:
+	cd sccTcpServer; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccTcpServer ../release/development/bin/
+
+sccDisplay:
+	cd sccDisplay; qmake -recursive CONFIG+=debug_and_release; make release && cp bin/sccDisplay ../release/development/bin/
+
+clean: 
+	cd sccGui; make clean; rm -f Makefile*
+	cd sccBoot; make clean; rm -f Makefile*
+	cd sccReset; make clean; rm -f Makefile*
+	cd sccKonsole; make clean; rm -f Makefile*
+	cd sccBmc; make clean; rm -f Makefile*
+	cd sccDump; make clean; rm -f Makefile*
+	cd sccWrite; make clean; rm -f Makefile*
+	cd sccPerf; make clean; rm -f Makefile*
+	cd sccTcpServer; make clean; rm -f Makefile*
+	cd sccDisplay; make clean; rm -f Makefile*
+	rm -rf release/development/bin/*
+
+.PHONY : sccGui sccBoot sccReset sccKonsole sccBmc sccDump sccWrite sccPerf sccTcpServer sccDisplay clean

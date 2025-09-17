@@ -1,0 +1,132 @@
+#!/bin/tcsh
+
+# Evaluate help argument before performing root check...
+if ( "$1" == "-h") then
+  echo "Usage: sccPowercycle [option]"
+  echo ""
+  echo "Options:"
+  echo "-r               Performs a hard power cycle; powers off SCC, sleeps, powers on, rescans PCI"
+  echo "                 The PCI bus ID of the Hib card (the PCIex card) needs to be smaller than "
+  echo "                 the PCI bus ID of the graphics card; that is, the Hib card needs to use a "
+  echo "                 PCIe card slot with a smaller ID."
+  echo "                 To find out the BUS-ID, you can issue lspci on the MCPC. The ID (first number "
+  echo "                 of each line) of the device called Device c048 (for Copperridge) or "
+  echo "                 Device c148 (for Rocky Lake) needs to be smaller than the ID of the VGA controller."
+  echo "-f <bitstream>   Same as -r, but also sets the new <bitstream> file. The"
+  echo "                 file needs to exist on the BMC filesystem, e.g. on the USB"
+  echo "                 stick."
+  echo "-s <on|off>      Switches the connected RockyLake or Copperridge platform on/off."
+  echo ""
+  echo "Important:"
+  echo "- Without arguments, this script performs a soft power cycle; resets SCC, resets FPGA, reloads crbif"
+  echo "- You need to be root to execute sccPowercycle. Try this:"
+  echo "  # sudo `which sccPowercycle`"
+  exit
+endif
+
+# Make sure that this is executed by root...
+if ( "`whoami`" != "root" ) then
+  echo "You need to be root to execute sccPowercycle. Try this:"
+  echo "# sudo `which sccPowercycle` $*"
+  exit
+endif
+
+# Check OS
+if ( `grep Ubuntu /etc/*release > /dev/null && echo Ubuntu` != "Ubuntu" ) then
+  echo "Warning: This script is only proven to work on Ubuntu OS..."
+  echo "         If it doesn't work on this operating system, please"
+  echo "         try a complete powercycle incl. MCPC reboot!"
+endif
+
+# Find bin folder (manually: export binpath=/opt/sccKit/development/bin)...
+setenv binpath `echo $0 | sed 's,/[^/]*$,,'`
+
+# Evaluate arguments
+if ( "$1" != "-f" && "`$binpath/sccBmc -c set | grep '/flash/default.bit'`" != "" ) then
+  echo "ERROR! Invalid bitstream setting on BMC...\nPlease try again with: $0 -f <valid bitstream>... Aborting!";
+  exit
+endif
+if ( "$1" == "-f") then
+  if (`grep -i RockyLake $binpath/../../systemSettings.ini` == "") then
+    echo 'ERROR! The "-f" option is only available on RockyLake systems... Aborting!';
+    exit
+  endif
+  if ( "$2" == "" ) then
+    echo "ERROR! Please provide valid bitstream path to -f option... Aborting!";
+    exit
+  endif
+  $binpath/sccBmc -c "set fpga $2" > /dev/null
+  if ( "`$binpath/sccBmc -c set | grep '/flash/default.bit'`" != "" ) then
+    echo "ERROR! Please provide valid bitstream path to -f option... Aborting!";
+    exit
+  else 
+    echo -n "New "
+    $binpath/sccBmc -c set | grep FPGA | sed "s/Default //"
+  endif
+  setenv hardPowercycle full
+  $binpath/sccBmc -c power | grep -q "is: OFF" && setenv hardPowercycle on
+else if ( "$1" == "-r") then
+  $binpath/sccBmc -c set | grep FPGA | sed "s/Default //"
+  setenv hardPowercycle full
+  $binpath/sccBmc -c power | grep -q "is: OFF" && setenv hardPowercycle on
+else if ( "$1" == "-s") then
+  if ( "$2" == "on") then
+    $binpath/sccBmc -c power | grep -q "is: ON" && echo "Power is already on... Aborting!" && exit
+    $binpath/sccBmc -c set | grep FPGA | sed "s/Default //"
+    setenv hardPowercycle on
+  else if ( "$2" == "off") then
+    $binpath/sccBmc -c power | grep -q "is: OFF" && echo "Power is already off... Aborting!" && exit
+    setenv hardPowercycle off
+  else
+    echo 'ERROR! Please provide either "on" or "off" to -s option... Aborting!';
+    exit
+  endif
+else
+  setenv hardPowercycle none
+endif
+
+# Perform powercycle...
+if (("$hardPowercycle" == "none") || ("$hardPowercycle" == "full")) then
+  echo "Sending reset to FPGA & SCC..."
+  # In case we are CRB this will work:
+  $binpath/sccBmc -c "board_reset" > /dev/null
+  # In case we are RLB this will work:
+  $binpath/sccBmc -c "reset scc" > /dev/null
+  $binpath/sccBmc -c "reset fpga" > /dev/null
+  echo "Unloading driver..."
+  rmmod crbif || echo "Driver was not loaded... No need to unload!"
+else
+  rmmod crbif >& /dev/null
+endif
+if ( "$hardPowercycle" != "none") then
+  if (( "$hardPowercycle" == "full") || ( "$hardPowercycle" == "off")) then
+    echo "Switching power off..."
+    $binpath/sccBmc -c "power off" > /dev/null
+    sleep 3
+  endif
+  if (( "$hardPowercycle" == "full") || ( "$hardPowercycle" == "on")) then
+    echo "Switching power on..."
+    $binpath/sccBmc -c "power on" > /dev/null
+    echo 1 > /sys/bus/pci/rescan
+    sleep 1
+    if ( -e /sys/bus/pci/devices/0000\:00\:`lspci -vt | grep -i "c.48" | sed "s/^[^+]*[+][-]\([0-9a-f][0-9a-f][.][0-9a-f]\).*/\1/"`/remove ) then
+      echo "Performing PCIe rescan."
+      echo 1 > /sys/bus/pci/devices/0000\:00\:`lspci -vt | grep -i "c.48" | sed "s/^[^+]*[+][-]\([0-9a-f][0-9a-f][.][0-9a-f]\).*/\1/"`/remove
+      sleep 1
+      echo 1 > /sys/bus/pci/rescan
+    endif
+  endif
+else
+  echo "Sending reset to FPGA & SCC..."
+  # In case we are CRB this will work:
+  $binpath/sccBmc -c "board_reset" > /dev/null
+  # In case we are RLB this will work:
+  $binpath/sccBmc -c "reset scc" > /dev/null
+  $binpath/sccBmc -c "reset fpga" > /dev/null
+endif  
+if ("$hardPowercycle" != "off") then
+  echo "Reloading driver"
+  modprobe crbif
+  dmesg | tail -1 | grep -q "mcedev 0000" && echo "Reloading successful! Please re-initialize System interface..."
+  echo 'Your next step should be to initialize the system (with sccGui or "sccBmc -i")...'
+endif
